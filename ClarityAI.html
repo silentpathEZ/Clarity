@@ -1,0 +1,1986 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clarity AI — Video Call & Accessibility</title>
+    <!-- Three.js Base -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- GLTFLoader для загрузки 3D модели -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <!-- MediaPipe Hands: распознавание жестов руки с веб-камеры -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <!-- MediaPipe Tasks Vision: готовая предобученная модель GestureRecognizer от Google (7 базовых жестов) -->
+    <script type="module">
+        import { GestureRecognizer, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest";
+        window.GestureRecognizer = GestureRecognizer;
+        window.FilesetResolver = FilesetResolver;
+    </script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        :root {
+            --bg-main: #07090e;
+            --card-bg: rgba(18, 24, 38, 0.85);
+            --border-color: rgba(255, 255, 255, 0.1);
+            --accent-purple: #8b5cf6;
+            --accent-cyan: #06b6d4;
+            --accent-green: #10b981;
+            --danger-red: #ef4444;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+
+        body {
+            background-color: var(--bg-main);
+            color: var(--text-main);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+
+        .accessibility-bar {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            z-index: 100;
+        }
+
+        .toggle-btn {
+            background: linear-gradient(135deg, var(--accent-purple), var(--accent-cyan));
+            border: none;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 50px;
+            font-weight: 700;
+            font-size: 14px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            box-shadow: 0 10px 25px rgba(139, 92, 246, 0.3);
+            transition: all 0.2s;
+        }
+
+        .toggle-btn.active {
+            background: linear-gradient(135deg, var(--accent-green), var(--accent-cyan));
+        }
+
+        #mannequin-widget {
+            display: none;
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            width: 280px;
+            height: 320px;
+            background: rgba(18, 24, 38, 0.95);
+            border: 2px solid var(--accent-purple);
+            border-radius: 24px;
+            z-index: 200;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.8);
+            backdrop-filter: blur(16px);
+            flex-direction: column;
+            overflow: hidden;
+            animation: slideUp 0.3s ease-out;
+        }
+
+        .widget-header {
+            padding: 10px 14px;
+            background: rgba(255,255,255,0.05);
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--accent-cyan);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        #mannequin-canvas { width: 100%; height: 200px; }
+
+        .widget-status {
+            padding: 10px;
+            text-align: center;
+            font-size: 12px;
+            color: var(--text-main);
+            background: rgba(0,0,0,0.3);
+            border-top: 1px solid var(--border-color);
+        }
+
+        #role-selection {
+            background: var(--card-bg);
+            backdrop-filter: blur(24px);
+            border: 1px solid var(--border-color);
+            padding: 40px;
+            border-radius: 32px;
+            text-align: center;
+            max-width: 460px;
+            width: 90%;
+        }
+
+        .role-card {
+            background: rgba(255, 255, 255, 0.03);
+            border: 2px solid rgba(255, 255, 255, 0.08);
+            padding: 20px;
+            border-radius: 20px;
+            cursor: pointer;
+            margin-top: 16px;
+            text-align: left;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .role-card.selected-once {
+            border-color: var(--accent-cyan) !important;
+            background: rgba(6, 182, 212, 0.15) !important;
+            animation: pulse 1.5s infinite;
+        }
+
+        .click-hint { font-size: 11px; color: var(--accent-cyan); margin-top: 4px; font-weight: bold; }
+
+        #call-screen {
+            display: none;
+            width: 95vw;
+            height: 90vh;
+            max-width: 1300px;
+            max-height: 850px;
+            background: #000;
+            border-radius: 28px;
+            overflow: hidden;
+            position: relative;
+            border: 1px solid var(--border-color);
+            flex-direction: row;
+        }
+
+        .call-header {
+            position: absolute;
+            top: 16px; left: 16px; right: 16px;
+            z-index: 20;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 18px;
+            background: rgba(15, 23, 42, 0.65);
+            backdrop-filter: blur(12px);
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .segment { flex: 1; position: relative; overflow: hidden; height: 100%; }
+        .segment-video { background-color: #0b0f19; }
+
+        .peer-simulation {
+            width: 100%; height: 100%;
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            background: radial-gradient(circle at center, #1e293b 0%, #0f172a 100%);
+            color: var(--text-muted); gap: 12px;
+        }
+
+        .peer-avatar {
+            width: 80px; height: 80px; border-radius: 50%;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+            display: flex; align-items: center; justify-content: center;
+            font-size: 32px; font-weight: 700; color: white;
+        }
+
+        .pip-window {
+            position: absolute;
+            width: 140px; height: 190px;
+            top: 70px; right: 16px;
+            border-radius: 16px; overflow: hidden;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            cursor: grab; z-index: 15; background: #000;
+        }
+
+        .pip-window video, .pip-window .peer-simulation { width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+
+        .segment-interpreter {
+            background: linear-gradient(180deg, #101422 0%, #07090e 100%);
+            border-left: 1px solid var(--border-color);
+            display: flex; flex-direction: column;
+            justify-content: center; align-items: center; padding: 24px;
+            position: relative;
+        }
+
+        #subtitles-box { display: none; text-align: center; width: 100%; max-width: 400px; z-index: 10; }
+
+        .live-caption-bar {
+            position: absolute;
+            bottom: 90px;
+            left: 50%;
+            transform: translateX(-50%) translateY(10px);
+            max-width: 82%;
+            background: rgba(15, 23, 42, 0.88);
+            border: 1px solid rgba(139, 92, 246, 0.45);
+            padding: 10px 20px;
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text-main);
+            z-index: 18;
+            opacity: 0;
+            pointer-events: none;
+            backdrop-filter: blur(10px);
+            transition: opacity 0.25s ease, transform 0.25s ease;
+        }
+
+        .live-caption-bar.visible {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+
+        .live-caption-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: var(--accent-purple);
+            animation: livePulse 1s infinite alternate;
+            flex-shrink: 0;
+        }
+
+        #training-panel {
+            display: none;
+            position: fixed;
+            top: 20px; right: 20px;
+            width: 320px;
+            max-height: 85vh;
+            overflow-y: auto;
+            background: rgba(18, 24, 38, 0.97);
+            border: 2px solid var(--accent-purple);
+            border-radius: 24px;
+            z-index: 300;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.8);
+            backdrop-filter: blur(16px);
+            flex-direction: column;
+            animation: slideUp 0.3s ease-out;
+        }
+
+        #training-webcam { width: 100%; height: 180px; object-fit: cover; background: #000; transform: scaleX(-1); }
+
+        .training-body { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+
+        #training-hand-status { font-size: 12px; color: var(--text-muted); text-align: center; }
+
+        #live-test-result {
+            font-size: 13px; text-align: center; padding: 8px;
+            background: rgba(139, 92, 246, 0.12); border-radius: 10px;
+            color: var(--accent-purple); font-weight: 600;
+        }
+
+        #gesture-label-input {
+            background: rgba(255,255,255,0.05); border: 1px solid var(--border-color);
+            color: var(--text-main); padding: 10px 12px; border-radius: 10px; font-size: 14px;
+        }
+
+        #record-btn {
+            background: linear-gradient(135deg, var(--accent-purple), var(--accent-cyan));
+            border: none; color: white; padding: 12px; border-radius: 12px;
+            font-weight: 700; cursor: pointer; user-select: none;
+        }
+        #record-btn:active { filter: brightness(0.85); }
+
+        #training-samples-list { max-height: 140px; overflow-y: auto; font-size: 13px; }
+
+        .training-actions { display: flex; gap: 8px; }
+        .training-actions button, .training-actions label {
+            flex: 1; text-align: center; font-size: 12px; padding: 8px;
+            border-radius: 10px; border: 1px solid var(--border-color);
+            background: rgba(255,255,255,0.05); color: var(--text-main); cursor: pointer;
+        }
+
+        /* === Новые стили: озвучивание, история слов, загрузка видео, текст->жест === */
+        #landmarks-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 12; transform: scaleX(-1); }
+
+        .confidence-badge {
+            position: absolute; top: 70px; left: 16px; z-index: 18;
+            background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(16, 185, 129, 0.5);
+            color: var(--accent-green); font-size: 11px; font-weight: 700;
+            padding: 4px 10px; border-radius: 12px; opacity: 0; transition: opacity 0.2s;
+        }
+        .confidence-badge.visible { opacity: 1; }
+
+        .sr-toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; justify-content: center; }
+        .sr-btn {
+            display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600;
+            padding: 8px 12px; border-radius: 10px; border: 1px solid var(--border-color);
+            background: rgba(255,255,255,0.06); color: var(--text-main); cursor: pointer;
+        }
+        .sr-btn.on { background: linear-gradient(135deg, var(--accent-green), var(--accent-cyan)); border-color: transparent; }
+        .sr-btn.danger { color: var(--danger-red); }
+        .sr-btn input[type=checkbox] { accent-color: var(--accent-cyan); }
+
+        #word-history-card {
+            background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 16px; padding: 14px 16px; margin-top: 10px; width: 100%; max-width: 400px;
+        }
+        #word-history-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; min-height: 22px; }
+        .word-chip {
+            background: rgba(139, 92, 246, 0.18); border: 1px solid rgba(139, 92, 246, 0.4);
+            color: var(--text-main); font-size: 12px; padding: 3px 10px; border-radius: 10px;
+        }
+        #video-upload-status { font-size: 11px; color: var(--text-muted); text-align: center; margin-top: 4px; min-height: 14px; }
+
+        #sign-panel-toggle-btn { background: linear-gradient(135deg, #f59e0b, #ef4444); }
+
+        #sign-panel {
+            display: none; position: fixed; top: 20px; right: 356px; width: 320px; max-height: 85vh;
+            overflow-y: auto; background: rgba(18, 24, 38, 0.97); border: 2px solid #f59e0b;
+            border-radius: 24px; z-index: 300; box-shadow: 0 20px 40px rgba(0,0,0,0.8);
+            backdrop-filter: blur(16px); flex-direction: column; animation: slideUp 0.3s ease-out;
+        }
+        #sign-panel-canvas { width: 100%; height: 200px; background: radial-gradient(circle at center, #1e293b 0%, #07090e 100%); }
+        .sign-panel-body { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+        #sign-text-input {
+            background: rgba(255,255,255,0.05); border: 1px solid var(--border-color); color: var(--text-main);
+            padding: 10px 12px; border-radius: 10px; font-size: 14px; resize: vertical; min-height: 60px;
+        }
+        #sign-parsed-words { display: flex; flex-wrap: wrap; gap: 6px; }
+        .sign-word-tag { font-size: 11px; padding: 3px 8px; border-radius: 8px; border: 1px solid var(--border-color); }
+        .sign-word-tag.known { color: var(--accent-green); border-color: rgba(16,185,129,0.4); background: rgba(16,185,129,0.1); }
+        .sign-word-tag.unknown { color: var(--text-muted); border-color: var(--border-color); text-decoration: line-through; }
+        #sign-play-status { font-size: 12px; text-align: center; color: var(--accent-cyan); min-height: 16px; }
+
+        @media (max-width: 700px) {
+            #sign-panel { right: 20px; top: 90px; }
+        }
+
+        .subtitle-card {
+            background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 20px; padding: 24px 20px; margin-top: 12px;
+        }
+        .subtitle-text { font-size: 20px; font-weight: 600; color: var(--accent-cyan); }
+        
+        #call-avatar-container { 
+            width: 100%; 
+            height: 100%; 
+            display: none; 
+            position: absolute;
+            top: 0; left: 0;
+            z-index: 1;
+        }
+
+        .speech-indicator {
+            position: absolute;
+            top: 75px;
+            z-index: 10;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(6, 182, 212, 0.15);
+            border: 1px solid var(--accent-cyan);
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--accent-cyan);
+        }
+
+        .pulse-dot {
+            width: 8px;
+            height: 8px;
+            background-color: var(--accent-cyan);
+            border-radius: 50%;
+            animation: livePulse 1s infinite alternate;
+        }
+
+        .controls-bar {
+            position: absolute; bottom: 24px; left: 50%;
+            transform: translateX(-50%); z-index: 20;
+            display: flex; gap: 16px;
+            background: rgba(15, 23, 42, 0.75);
+            backdrop-filter: blur(16px);
+            padding: 10px 20px; border-radius: 24px;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+        }
+
+        .control-btn {
+            width: 48px; height: 48px; border-radius: 16px; border: none;
+            background: rgba(255, 255, 255, 0.08); color: var(--text-main);
+            display: flex; align-items: center; justify-content: center; cursor: pointer;
+        }
+
+        .control-btn.end-call { background: var(--danger-red); }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(6, 182, 212, 0.4); }
+            70% { box-shadow: 0 0 0 10px rgba(6, 182, 212, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(6, 182, 212, 0); }
+        }
+
+        @keyframes livePulse {
+            0% { opacity: 0.3; transform: scale(0.8); }
+            100% { opacity: 1; transform: scale(1.2); }
+        }
+
+        @keyframes slideUp { from { transform: translateY(50px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    </style>
+</head>
+<body>
+
+    <div class="accessibility-bar" id="top-bar">
+        <button class="toggle-btn" id="guide-toggle-btn" onclick="toggleGuideMode()">
+            <i data-lucide="hand"></i>
+            <span id="guide-btn-text">Включить жестовый гид</span>
+        </button>
+        <button class="toggle-btn" onclick="openTrainingPanel()" style="margin-top: 10px; background: linear-gradient(135deg, #10b981, #06b6d4);">
+            <i data-lucide="graduation-cap"></i>
+            <span>Обучить жесты</span>
+        </button>
+        <button class="toggle-btn" id="sign-panel-toggle-btn" onclick="toggleSignPanel()" style="margin-top: 10px;">
+            <i data-lucide="type"></i>
+            <span>Текст → Жесты</span>
+        </button>
+    </div>
+
+    <div id="sign-panel">
+        <div class="widget-header">
+            <span>ТЕКСТ → ЖЕСТОВЫЙ ЯЗЫК</span>
+            <button onclick="toggleSignPanel()" style="background:none; border:none; color:var(--text-main); cursor:pointer; font-size:16px;">✕</button>
+        </div>
+        <div id="sign-panel-canvas"></div>
+        <div class="sign-panel-body">
+            <textarea id="sign-text-input" placeholder="Например: Привет, как дела?"></textarea>
+            <div id="sign-parsed-words"></div>
+            <div id="sign-play-status">—</div>
+            <button class="sr-btn" style="background: linear-gradient(135deg, var(--accent-purple), var(--accent-cyan)); justify-content:center;" onclick="playTextAsSigns()">
+                ▶ Показать жестами
+            </button>
+            <div style="font-size:11px; color:var(--text-muted); line-height:1.4;">
+                Известные слова сейчас: <span id="sign-dictionary-preview"></span>. Новые слова можно добавить в объект <code>SIGN_DICTIONARY</code> в коде — система расширяемая.
+            </div>
+        </div>
+    </div>
+
+    <div id="training-panel">
+        <div class="widget-header">
+            <span>ОБУЧЕНИЕ ЖЕСТОВ (k-NN)</span>
+            <button onclick="closeTrainingPanel()" style="background:none; border:none; color:var(--text-main); cursor:pointer; font-size:16px;">✕</button>
+        </div>
+        <div style="position:relative;">
+            <video id="training-webcam" autoplay playsinline muted></video>
+            <canvas id="training-landmarks-overlay" style="position:absolute; top:0; left:0; width:100%; height:180px; pointer-events:none; transform: scaleX(-1);"></canvas>
+        </div>
+        <div class="training-body">
+            <div id="training-hand-status">Рука не найдена</div>
+            <div id="live-test-result">Тест распознавания: —</div>
+            <input type="text" id="gesture-label-input" placeholder="Название жеста, напр. Привет">
+            <label class="sr-btn" style="justify-content:center;">
+                <input type="checkbox" id="dynamic-gesture-checkbox"> Динамический жест (последовательность кадров)
+            </label>
+            <button id="record-btn"
+                onmousedown="startRecording()" onmouseup="stopRecording()" onmouseleave="stopRecording()"
+                ontouchstart="startRecording()" ontouchend="stopRecording()">
+                ⬤ Удерживайте, чтобы записать
+            </button>
+            <label class="sr-btn" style="justify-content:center;">
+                <i data-lucide="folder-up"></i> Добавить обучающее видео для этого жеста
+                <input type="file" id="training-video-input" accept="video/mp4,video/webm,video/quicktime" style="display:none;" onchange="handleTrainingVideoUpload(event)">
+            </label>
+            <div id="training-video-status" style="font-size:11px; color:var(--text-muted); text-align:center;"></div>
+            <div id="training-samples-list"></div>
+            <div class="training-actions">
+                <button onclick="exportGestureModel()">Экспорт JSON</button>
+                <label>
+                    Импорт JSON
+                    <input type="file" id="import-model-input" accept=".json" onchange="importGestureModel(event)" style="display:none;">
+                </label>
+                <button onclick="clearGestureModel()" style="color:var(--danger-red);">Очистить</button>
+            </div>
+            <div style="font-size:11px; color:var(--text-muted); line-height:1.4;">
+                Запиши 15-20 образцов на жест, слегка меняя угол руки — это повышает точность k-NN.
+                Для динамических жестов (несколько кадров подряд, напр. «пока» — помахать рукой) включи чекбокс выше:
+                одно удержание кнопки запишет ОДНУ последовательность кадров как единый образец.
+            </div>
+        </div>
+    </div>
+
+    <div id="mannequin-widget">
+        <div class="widget-header">
+            <span>3D МАНЕКЕН ЖЕСТОВ</span>
+            <i data-lucide="bot" size="16"></i>
+        </div>
+        <div id="mannequin-canvas"></div>
+        <div class="widget-status" id="mannequin-text">
+            Статичный жест приветствия
+        </div>
+    </div>
+
+    <div id="role-selection">
+        <h2 style="margin-bottom: 8px;">Выберите профиль</h2>
+        <p style="color: var(--text-muted); font-size: 14px; margin-bottom: 20px;">
+            ИИ подстроит формат видеозвонка под вас
+        </p>
+
+        <div class="role-card" id="card-hearing" onclick="handleCardClick('hearing')">
+            <div style="background: rgba(6, 182, 212, 0.2); padding: 12px; border-radius: 14px; color: var(--accent-cyan);">
+                <i data-lucide="mic"></i>
+            </div>
+            <div>
+                <div style="font-weight: 700;">Слышащий пользователь</div>
+                <div style="font-size: 12px; color: var(--text-muted);">Перевод жестов в субтитры</div>
+                <div class="click-hint" id="hint-hearing"></div>
+            </div>
+        </div>
+
+        <div class="role-card" id="card-deaf" onclick="handleCardClick('deaf')">
+            <div style="background: rgba(139, 92, 246, 0.2); padding: 12px; border-radius: 14px; color: var(--accent-purple);">
+                <i data-lucide="hand"></i>
+            </div>
+            <div>
+                <div style="font-weight: 700;">Глухой / Язык жестов</div>
+                <div style="font-size: 12px; color: var(--text-muted);">Перевод речи в 3D-жесты</div>
+                <div class="click-hint" id="hint-deaf"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="call-screen">
+        <div class="call-header">
+            <div style="display:flex; align-items:center; gap:8px; font-weight:600;">
+                <div style="width:8px; height:8px; background:#10b981; border-radius:50%;"></div>
+                <span><strong>Clarity AI</strong> • Прямой эфир</span>
+            </div>
+            <span id="role-badge" style="font-size: 12px; color: var(--text-muted);"></span>
+        </div>
+
+        <div class="segment segment-video" id="video-zone">
+            <div id="main-view" style="width:100%; height:100%;">
+                <div class="peer-simulation">
+                    <div class="peer-avatar">А</div>
+                    <div>Собеседник (Алексей)</div>
+                </div>
+            </div>
+
+            <div class="pip-window" id="pip-window">
+                <div id="pip-view" style="width:100%; height:100%; position:relative;">
+                    <video id="webcam" autoplay playsinline muted style="transform: scaleX(-1); width:100%; height:100%; object-fit:cover;"></video>
+                    <canvas id="landmarks-overlay"></canvas>
+                </div>
+            </div>
+
+            <div class="confidence-badge" id="confidence-badge">score: —</div>
+
+            <div class="live-caption-bar" id="live-caption-bar">
+                <span class="live-caption-dot"></span>
+                <span id="live-caption-text"></span>
+            </div>
+        </div>
+
+        <div class="segment segment-interpreter">
+            <div id="speech-status" class="speech-indicator" style="display: none;">
+                <div class="pulse-dot"></div>
+                <span id="speech-status-text">Статичная модель руки...</span>
+            </div>
+
+            <div id="subtitles-box">
+                <div class="subtitle-card">
+                    <div class="subtitle-text" id="active-subtitle">"Слушаю собеседника..."</div>
+                </div>
+
+                <div id="word-history-card">
+                    <div style="font-size:11px; color:var(--text-muted); font-weight:700;">ИСТОРИЯ РАСПОЗНАННЫХ СЛОВ</div>
+                    <div id="word-history-list"></div>
+                </div>
+
+                <div class="sr-toolbar">
+                    <button class="sr-btn" id="speak-btn" onclick="speakCurrentSentence()"><i data-lucide="volume-2"></i> Озвучить</button>
+                    <label class="sr-btn"><input type="checkbox" id="auto-speak-checkbox" onchange="toggleAutoSpeak(this.checked)"> Авто-озвучка</label>
+                    <button class="sr-btn" id="pause-recognition-btn" onclick="toggleRecognitionPause()"><i data-lucide="pause"></i> Пауза</button>
+                    <button class="sr-btn" onclick="deleteLastWord()"><i data-lucide="delete"></i> Удалить слово</button>
+                    <button class="sr-btn danger" onclick="clearWordHistory()"><i data-lucide="trash-2"></i> Очистить</button>
+                    <label class="sr-btn">
+                        <i data-lucide="folder-up"></i> Загрузить видео
+                        <input type="file" id="gesture-video-input" accept="video/mp4,video/webm,video/quicktime" style="display:none;" onchange="handleGestureVideoUpload(event)">
+                    </label>
+                </div>
+                <div id="video-upload-status"></div>
+            </div>
+
+            <div id="call-avatar-container"></div>
+        </div>
+
+        <div class="controls-bar">
+            <button class="control-btn"><i data-lucide="mic"></i></button>
+            <button class="control-btn"><i data-lucide="video"></i></button>
+            <button class="control-btn end-call" onclick="location.reload()"><i data-lucide="phone-off"></i></button>
+        </div>
+    </div>
+
+    <script>
+        lucide.createIcons();
+        document.addEventListener('DOMContentLoaded', () => { if (typeof updateSignDictionaryPreview === 'function') updateSignDictionaryPreview(); });
+
+        const EMBEDDED_GLTF_JSON = {
+          "asset": {
+            "version": "2.0",
+            "generator": "Sketchfab-15.58.0",
+            "extras": {
+              "author": "Elena FF (https://sketchfab.com/elenaferfor)",
+              "license": "CC-BY-SA-4.0 (http://creativecommons.org/licenses/by-sa/4.0/)",
+              "source": "https://sketchfab.com/3d-models/rigged-hand-eae97cc2a742413cb5338ab942b12c1e",
+              "title": "Rigged hand"
+            }
+          },
+          "extensionsUsed": [
+            "KHR_materials_specular"
+          ],
+          "buffers": [
+            {
+              "byteLength": 2180889
+            }
+          ],
+          "bufferViews": [
+            { "buffer": 0, "byteLength": 130640, "byteStride": 8, "name": "shortBufferViews", "target": 34962 },
+            { "buffer": 0, "byteLength": 347928, "byteOffset": 130640, "name": "floatBufferViews", "target": 34963 },
+            { "buffer": 0, "byteLength": 130640, "byteOffset": 478568, "byteStride": 8, "name": "floatBufferViews", "target": 34962 },
+            { "buffer": 0, "byteLength": 391920, "byteOffset": 609208, "byteStride": 12, "name": "floatBufferViews", "target": 34962 },
+            { "buffer": 0, "byteLength": 261280, "byteOffset": 1001128, "byteStride": 16, "name": "floatBufferViews", "target": 34962 },
+            { "buffer": 0, "byteLength": 4416, "byteOffset": 1262408, "name": "floatBufferViews" },
+            { "buffer": 0, "byteLength": 30924, "byteOffset": 1266824, "name": "floatBufferViews" },
+            { "buffer": 0, "byteLength": 17220, "byteOffset": 1297748, "byteStride": 12, "name": "floatBufferViews" },
+            { "buffer": 0, "byteLength": 100736, "byteOffset": 1314968, "byteStride": 16, "name": "floatBufferViews" },
+            { "buffer": 0, "byteLength": 251573, "byteOffset": 1415704, "name": "lambert1_baseColor.jpeg" },
+            { "buffer": 0, "byteLength": 242437, "byteOffset": 1667277, "name": "lambert1_metallicRoughness.png" },
+            { "buffer": 0, "byteLength": 271175, "byteOffset": 1909714, "name": "lambert1_specularf0.png" }
+          ],
+          "images": [
+            { "bufferView": 9, "mimeType": "image/jpeg" },
+            { "bufferView": 10, "mimeType": "image/png" },
+            { "bufferView": 11, "mimeType": "image/png" }
+          ],
+          "materials": [
+            {
+              "name": "lambert1",
+              "doubleSided": true,
+              "pbrMetallicRoughness": {
+                "baseColorTexture": { "index": 0 },
+                "metallicFactor": 0.0,
+                "metallicRoughnessTexture": { "index": 1 }
+              },
+              "extensions": {
+                "KHR_materials_specular": {
+                  "specularColorFactor": [1.0, 1.0, 1.0],
+                  "specularFactor": 1.0,
+                  "specularTexture": { "index": 2 }
+                }
+              }
+            }
+          ],
+          "meshes": [
+            {
+              "name": "handSmooth.001_lambert1_0",
+              "primitives": [
+                {
+                  "attributes": {
+                    "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2, "TEXCOORD_1": 2, "TEXCOORD_2": 2, "JOINTS_0": 5, "WEIGHTS_0": 6
+                  },
+                  "indices": 3,
+                  "material": 0,
+                  "mode": 4
+                }
+              ]
+            }
+          ],
+          "nodes": [
+            { "name": "Sketchfab_model", "children": [1], "matrix": [0.01452488824725151, 0.0, 0.0, 0.0, 0.0, 3.225173072441192e-18, -0.01452488824725151, 0.0, 0.0, 0.01452488824725151, 3.225173072441192e-18, 0.0, 0.0, 0.0, 0.0, 1.0] },
+            { "name": "f02ee8bcd0644bfa96313f17aa2cca59.fbx", "children": [2], "matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0] },
+            { "name": "Object_2", "children": [3] },
+            { "name": "RootNode", "children": [4, 7, 9, 10] },
+            { "name": "Light", "children": [5], "translation": [407.6245422363281, 590.38623046875, -100.54539489746094], "rotation": [0.16907571256160736, 0.7558803558349609, -0.2721713185310364, 0.5709474682807922], "scale": [100.00000762939453, 100.0, 100.0] },
+            { "name": "Object_5", "children": [6], "matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 2.220446049250313e-16, 1.0, 0.0, 0.0, -1.0, 2.220446049250313e-16, 0.0, 0.0, 0.0, 0.0, 1.0] },
+            { "name": "Object_6" },
+            { "name": "Camera", "children": [8], "translation": [735.88916015625, 495.8309326171875, 692.5791015625], "rotation": [-0.21255728602409363, 0.9047970175743103, -0.08438936620950699, 0.3592217266559601], "scale": [100.0, 100.00000762939453, 99.99999237060547] },
+            { "name": "Object_8" },
+            { "name": "handSmooth.001", "mesh": 0, "translation": [-19.168163299560547, 79.7803955078125, 66.55733489990234], "rotation": [-0.6694696545600891, -0.021031299605965614, 0.3982584476470947, 0.6267042756080627], "scale": [100.0, 99.99999237060547, 100.00000762939453] },
+            { "name": "Armature", "children": [11], "rotation": [-0.7071068286895752, 0.0, 0.0, 0.7071067094802856], "scale": [100.0, 100.0, 100.0] },
+            { "name": "Object_11", "children": [12, 13, 14] },
+            { "name": "Object_13", "matrix": [68.18957802759229, 52.73402221132078, -50.68829228579567, 0.0, -47.10209499053391, -21.359847974134947, -85.58707511111494, 0.0, -55.960456032394255, 82.23672273368119, 10.273640256164365, 0.0, -19.168162631807206, 79.7803862254271, 66.5573296364305, 1.0] },
+            { "name": "Object_14", "mesh": 0, "skin": 0 },
+            { "name": "_rootJoint", "children": [15] },
+            { "name": "pulse.R_01", "children": [16], "translation": [0.0, -0.042648352682590485, 0.0], "rotation": [0.7374816536903381, 8.051005551124035e-08, 8.791467109858786e-08, 0.6753671765327454] },
+            { "name": "hand.R_02", "children": [17], "translation": [0.0, 0.17399093508720398, 0.0], "rotation": [0.030325498431921005, -0.008348146453499794, -0.04152918606996536, 0.998642086982727], "scale": [0.9999999403953552, 1.0, 1.0] },
+            { "name": "hand.R.001_011", "translation": [0.0, 0.2024027705192566, 0.0], "rotation": [-0.019387779757380486, 0.01139103714376688, 0.0863344669342041, 0.9960123896598816], "scale": [0.9999998807907104, 0.9999998807907104, 1.0] }
+          ]
+        };
+
+        const MODEL_URL = 'hand_model.glb';
+
+        let isGuideActive = false;
+        let selectedRoleOnce = null;
+        let mannequinRenderer;
+        let callRenderer;
+
+        function toggleGuideMode() {
+            isGuideActive = !isGuideActive;
+            const widget = document.getElementById('mannequin-widget');
+            const btnText = document.getElementById('guide-btn-text');
+            const toggleBtn = document.getElementById('guide-toggle-btn');
+
+            if (isGuideActive) {
+                widget.style.display = 'flex';
+                btnText.innerText = 'Выключить гид';
+                toggleBtn.classList.add('active');
+                if (!mannequinRenderer) init3DMannequin();
+                updateHints();
+            } else {
+                widget.style.display = 'none';
+                btnText.innerText = 'Включить жестовый гид';
+                toggleBtn.classList.remove('active');
+                resetSelections();
+            }
+        }
+
+        function handleCardClick(role) {
+            if (!isGuideActive) {
+                startCall(role);
+                return;
+            }
+
+            if (selectedRoleOnce === role) {
+                startCall(role);
+            } else {
+                selectedRoleOnce = role;
+                highlightCard(role);
+                triggerMannequinGesture(role);
+            }
+        }
+
+        function triggerMannequinGesture(role) {
+            const statusText = document.getElementById('mannequin-text');
+            if (role === 'hearing') {
+                statusText.innerHTML = "👈 <b>Режим:</b> «Звук в текст».<br><span style='color:var(--accent-cyan)'>Кликните ещё раз для старта!</span>";
+            } else if (role === 'deaf') {
+                statusText.innerHTML = "👈 <b>Режим:</b> «Язык жестов».<br><span style='color:var(--accent-purple)'>Кликните ещё раз для старта!</span>";
+            }
+        }
+
+        function highlightCard(role) {
+            resetSelections();
+            selectedRoleOnce = role;
+            const card = document.getElementById(`card-${role}`);
+            const hint = document.getElementById(`hint-${role}`);
+            card.classList.add('selected-once');
+            hint.innerText = "Кликните ещё раз, чтобы начать звонок ↵";
+        }
+
+        function resetSelections() {
+            selectedRoleOnce = null;
+            document.querySelectorAll('.role-card').forEach(c => c.classList.remove('selected-once'));
+            updateHints();
+        }
+
+        function updateHints() {
+            if (isGuideActive) {
+                document.getElementById('hint-hearing').innerText = selectedRoleOnce === 'hearing' ? "Кликните ещё раз, чтобы начать звонок ↵" : "1-й клик — подсказка, 2-й клик — выбор";
+                document.getElementById('hint-deaf').innerText = selectedRoleOnce === 'deaf' ? "Кликните ещё раз, чтобы начать звонок ↵" : "1-й клик — подсказка, 2-й клик — выбор";
+            } else {
+                document.querySelectorAll('.click-hint').forEach(h => h.innerText = '');
+            }
+        }
+
+        async function startCall(role) {
+            document.getElementById('role-selection').style.display = 'none';
+            document.getElementById('top-bar').style.display = 'none';
+            document.getElementById('mannequin-widget').style.display = 'none';
+            document.getElementById('call-screen').style.display = 'flex';
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                document.getElementById('webcam').srcObject = stream;
+                initGestureRecognition(); // камера всегда переводит жест собеседника -> live-caption поверх видео
+            } catch (err) { console.warn("Камера не подключена или отклонена", err); }
+
+            if (role === 'hearing') {
+                document.getElementById('role-badge').innerText = "Профиль: Слышащий";
+                document.getElementById('subtitles-box').style.display = 'block';
+            } else {
+                document.getElementById('role-badge').innerText = "Профиль: Язык жестов";
+                document.getElementById('call-avatar-container').style.display = 'block';
+                document.getElementById('speech-status').style.display = 'flex';
+                initCall3DAvatar();
+                initSpeechRecognition(); // речь собеседника -> текст + жест 3D-руки
+            }
+            makePipDraggable();
+        }
+
+        function loadModelWithParsedJSON(loader, url, onLoad) {
+            loader.load(url, onLoad, undefined, () => {
+                loader.parse(EMBEDDED_GLTF_JSON, '', onLoad);
+            });
+        }
+
+        // Статичная модель для виджета (без деформации костей)
+        function init3DMannequin() {
+            const container = document.getElementById('mannequin-canvas');
+            const scene = new THREE.Scene();
+            const camera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 0.1, 1000);
+            
+            mannequinRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            mannequinRenderer.setSize(container.clientWidth, container.clientHeight);
+            container.appendChild(mannequinRenderer.domElement);
+
+            scene.add(new THREE.AmbientLight(0xffffff, 1.8));
+            const dirLight = new THREE.DirectionalLight(0xffffff, 2);
+            dirLight.position.set(2, 5, 3);
+            scene.add(dirLight);
+
+            const loader = new THREE.GLTFLoader();
+            loadModelWithParsedJSON(loader, MODEL_URL, (gltf) => {
+                const handMesh = gltf.scene;
+                handMesh.scale.set(1.5, 1.5, 1.5);
+                handMesh.position.set(0, -0.8, 0); 
+                
+                // Вращаем саму модель целиком, не трогая внутренние кости
+                handMesh.rotation.set(Math.PI / 4, Math.PI, 0);
+
+                scene.add(handMesh);
+                mannequinBoneMap = buildHandBoneMap(handMesh);
+                applyPoseToHand(mannequinBoneMap, 'open_palm', 0);
+
+                (function renderLoop() {
+                    mannequinRenderer.render(scene, camera);
+                    requestAnimationFrame(renderLoop);
+                })();
+            });
+
+            camera.position.z = 2.5;
+        }
+
+        // Статичная модель для экрана звонка (без деформации костей)
+        function initCall3DAvatar() {
+            const container = document.getElementById('call-avatar-container');
+            const scene = new THREE.Scene();
+            const camera = new THREE.PerspectiveCamera(60, container.clientWidth / container.clientHeight, 0.1, 1000);
+            
+            callRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            callRenderer.setSize(container.clientWidth, container.clientHeight);
+            container.appendChild(callRenderer.domElement);
+
+            scene.add(new THREE.AmbientLight(0xffffff, 2));
+            const dirLight = new THREE.DirectionalLight(0x06b6d4, 2.5);
+            dirLight.position.set(3, 4, 5);
+            scene.add(dirLight);
+
+            const loader = new THREE.GLTFLoader();
+            loadModelWithParsedJSON(loader, MODEL_URL, (gltf) => {
+                const handMesh = gltf.scene;
+                handMesh.scale.set(2.2, 2.2, 2.2);
+                
+                handMesh.position.set(0, -0.5, 0);
+                handMesh.rotation.set(Math.PI / 4, Math.PI, 0);
+
+                scene.add(handMesh);
+                callAvatarBoneMap = buildHandBoneMap(handMesh);
+                applyPoseToHand(callAvatarBoneMap, 'open_palm', 0);
+
+                (function renderLoop() {
+                    callRenderer.render(scene, camera);
+                    requestAnimationFrame(renderLoop);
+                })();
+            });
+
+            camera.position.z = 3.5;
+        }
+
+        function makePipDraggable() {
+            const pip = document.getElementById('pip-window');
+            const zone = document.getElementById('video-zone');
+            let isDragging = false, hasDragged = false, startX, startY, initialLeft, initialTop;
+
+            const onStart = (e) => {
+                isDragging = true; hasDragged = false;
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+                startX = clientX; startY = clientY;
+                const rect = pip.getBoundingClientRect();
+                const zoneRect = zone.getBoundingClientRect();
+                initialLeft = rect.left - zoneRect.left;
+                initialTop = rect.top - zoneRect.top;
+
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onEnd);
+                document.addEventListener('touchmove', onMove);
+                document.addEventListener('touchend', onEnd);
+            };
+
+            const onMove = (e) => {
+                if (!isDragging) return;
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+                const deltaX = clientX - startX;
+                const deltaY = clientY - startY;
+
+                if (Math.abs(deltaX) > 5 || Math.abs(deltaY) > 5) hasDragged = true;
+
+                const zoneRect = zone.getBoundingClientRect();
+                let newLeft = Math.max(8, Math.min(initialLeft + deltaX, zoneRect.width - pip.offsetWidth - 8));
+                let newTop = Math.max(60, Math.min(initialTop + deltaY, zoneRect.height - pip.offsetHeight - 8));
+
+                pip.style.left = `${newLeft}px`;
+                pip.style.top = `${newTop}px`;
+                pip.style.right = 'auto';
+            };
+
+            const onEnd = () => {
+                isDragging = false;
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onEnd);
+                document.removeEventListener('touchmove', onMove);
+                document.removeEventListener('touchend', onEnd);
+                if (!hasDragged) swapVideos();
+            };
+
+            pip.addEventListener('mousedown', onStart);
+            pip.addEventListener('touchstart', onStart, { passive: true });
+        }
+
+        function swapVideos() {
+            const mainView = document.getElementById('main-view');
+            const pipView = document.getElementById('pip-view');
+            const temp = mainView.innerHTML;
+            mainView.innerHTML = pipView.innerHTML;
+            pipView.innerHTML = temp;
+
+            const videoElem = document.querySelector('video#webcam');
+            if (videoElem && window.navigator.mediaDevices) {
+                navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+                    .then(stream => { videoElem.srcObject = stream; });
+            }
+        }
+
+        /* =====================================================================
+           1. РАСПОЗНАВАНИЕ ЖЕСТОВ: веб-камера -> GestureRecognizer (готовая
+           ПРЕДОБУЧЕННАЯ модель Google, MediaPipe Tasks) -> жест -> текст.
+
+           Это настоящая нейросеть, обученная Google на реальных руках, а не
+           моя эвристика. "Из коробки" она различает 7 базовых жестов:
+           Closed_Fist, Open_Palm, Pointing_Up, Thumb_Up, Thumb_Down, Victory, ILoveYou.
+
+           Если готовая модель не узнала жест (или скор низкий) — используем
+           landmarks из того же результата и пробуем твой собственный k-NN
+           (жесты, записанные в панели "Обучить жесты"). Так совмещаются
+           готовая модель и твои кастомные знаки.
+           ===================================================================== */
+
+        // Модель = список записанных образцов {label, vector}. Живёт в памяти
+        // вкладки; чтобы не терять её между сессиями — используй Экспорт/Импорт JSON
+        // в training-панели (сохраняет реальный файл на диск, без localStorage).
+        const gestureModel = { samples: [] };
+
+        const KNN_K = 3;                 // сколько ближайших соседей учитываем
+        const KNN_MAX_DISTANCE = 1.35;   // порог "непохоже ни на что" (эмпирически, можно подстроить)
+        const KNN_MIN_VOTES_SHARE = 0.6; // доля голосов соседей для уверенного решения
+
+        // Готовые жесты предобученной модели Google -> русский текст.
+        // ILoveYou — это реальный знак ASL "я тебя люблю" (большой+указательный+мизинец).
+        const CANNED_GESTURE_TO_TEXT = {
+            Open_Palm: 'Привет',
+            Closed_Fist: 'Да',
+            Thumb_Up: 'Хорошо',
+            Thumb_Down: 'Плохо',
+            Victory: 'Мир',
+            Pointing_Up: 'Внимание',
+            ILoveYou: 'Я тебя люблю'
+        };
+        const CANNED_MIN_SCORE = 0.6; // порог уверенности предобученной модели
+
+        let gestureRecognizerModel = null; // экземпляр готовой модели (кэшируется между звонками)
+        let gestureRafId = null;
+        let lastGesture = null;
+        let lastGestureTime = 0;
+        let latestLandmarks = null; // всегда последние увиденные landmarks — нужно training-панели
+        let isRecognitionPaused = false;   // кнопка "Пауза" в тулбаре субтитров
+        let videoPipelineBusy = false;     // true, пока обрабатывается загруженное видео (чтобы не мешать камере)
+
+        /* =====================================================================
+           1c. ДИНАМИЧЕСКИЕ (многокадровые) ЖЕСТЫ.
+           Статические жесты (k-NN выше) сравнивают ОДИН кадр landmarks.
+           Динамические жесты — это последовательность из N кадров (например,
+           "помахать рукой" для ПОКА). Мы копим скользящее окно последних кадров
+           и на каждом шаге сравниваем его целиком с записанными в training-панели
+           последовательностями через упрощённый DTW (Dynamic Time Warping):
+           обе последовательности растягиваются/сжимаются к одинаковой длине
+           линейной интерполяцией индексов, затем считается суммарное euclid-расстояние.
+           Это НЕ нейросеть (LSTM/GRU/Transformer) — лёгкая эвристика, которую
+           легко заменить на настоящую обученную модель позже (см. итоговый отчёт).
+           ===================================================================== */
+        const SEQUENCE_WINDOW_SIZE = 24;      // сколько последних кадров держим в буфере
+        const SEQUENCE_MIN_FRAMES = 8;        // меньше кадров — не пытаемся распознать динамический жест
+        const SEQUENCE_RESAMPLE_LEN = 16;     // длина, к которой приводим обе последовательности перед сравнением
+        const SEQUENCE_MAX_DISTANCE = 9.0;    // порог "непохоже ни на что" (эмпирически)
+        let sequenceFrameBuffer = [];
+
+        function pushSequenceFrame(vector) {
+            if (vector === null) { sequenceFrameBuffer = []; return; } // рука пропала — последовательность прервана
+            sequenceFrameBuffer.push(vector);
+            if (sequenceFrameBuffer.length > SEQUENCE_WINDOW_SIZE) sequenceFrameBuffer.shift();
+        }
+
+        function resampleSequence(seq, targetLen) {
+            if (seq.length === targetLen) return seq;
+            const out = [];
+            for (let i = 0; i < targetLen; i++) {
+                const srcIdx = (i / (targetLen - 1)) * (seq.length - 1);
+                const lo = Math.floor(srcIdx), hi = Math.ceil(srcIdx);
+                const t = srcIdx - lo;
+                if (lo === hi) { out.push(seq[lo]); continue; }
+                const a = seq[lo], b = seq[hi];
+                out.push(a.map((v, i2) => v * (1 - t) + b[i2] * t));
+            }
+            return out;
+        }
+
+        function sequenceDistance(seqA, seqB) {
+            const a = resampleSequence(seqA, SEQUENCE_RESAMPLE_LEN);
+            const b = resampleSequence(seqB, SEQUENCE_RESAMPLE_LEN);
+            let sum = 0;
+            for (let i = 0; i < a.length; i++) sum += euclideanDistance(a[i], b[i]);
+            return sum / a.length;
+        }
+
+        function classifySequenceWithKNN() {
+            const dynamicSamples = gestureModel.samples.filter(s => s.type === 'sequence');
+            if (dynamicSamples.length === 0 || sequenceFrameBuffer.length < SEQUENCE_MIN_FRAMES) return null;
+
+            let best = null;
+            dynamicSamples.forEach(s => {
+                const dist = sequenceDistance(sequenceFrameBuffer, s.frames);
+                if (!best || dist < best.dist) best = { label: s.label, dist };
+            });
+
+            if (!best || best.dist > SEQUENCE_MAX_DISTANCE) return null;
+            const confidence = Math.max(0, 1 - best.dist / SEQUENCE_MAX_DISTANCE);
+            return { label: best.label, confidence };
+        }
+
+        function toggleRecognitionPause() {
+            isRecognitionPaused = !isRecognitionPaused;
+            const btn = document.getElementById('pause-recognition-btn');
+            if (btn) {
+                btn.classList.toggle('on', isRecognitionPaused);
+                btn.innerHTML = isRecognitionPaused
+                    ? '<i data-lucide="play"></i> Продолжить'
+                    : '<i data-lucide="pause"></i> Пауза';
+                if (window.lucide) lucide.createIcons();
+            }
+        }
+
+        /* =====================================================================
+           1d. ИСТОРИЯ СЛОВ / СБОРКА ФРАЗЫ + ОЗВУЧИВАНИЕ (Speech Synthesis API)
+           ===================================================================== */
+        let wordHistory = [];
+        let autoSpeakEnabled = false;
+
+        function addWordToHistory(word) {
+            wordHistory.push(word);
+            renderWordHistory();
+            if (autoSpeakEnabled) speakText(word);
+        }
+
+        function deleteLastWord() {
+            wordHistory.pop();
+            renderWordHistory();
+        }
+
+        function clearWordHistory() {
+            wordHistory = [];
+            renderWordHistory();
+        }
+
+        function currentSentence() {
+            if (wordHistory.length === 0) return '';
+            // Простая сборка фразы: слова через запятую/пробел, первая буква — заглавная, точка в конце.
+            const raw = wordHistory.join(', ');
+            const sentence = raw.charAt(0).toUpperCase() + raw.slice(1);
+            return /[.!?]$/.test(sentence) ? sentence : sentence + '.';
+        }
+
+        function renderWordHistory() {
+            const listEl = document.getElementById('word-history-list');
+            const subtitleEl = document.getElementById('active-subtitle');
+            if (listEl) {
+                listEl.innerHTML = wordHistory.length
+                    ? wordHistory.map(w => `<span class="word-chip">${w}</span>`).join('')
+                    : '<span style="color:var(--text-muted); font-size:11px;">Пока пусто</span>';
+            }
+            if (subtitleEl && wordHistory.length) {
+                subtitleEl.innerText = `"${currentSentence()}"`;
+            }
+        }
+
+        function speakText(text) {
+            if (!('speechSynthesis' in window) || !text) return;
+            const utter = new SpeechSynthesisUtterance(text);
+            utter.lang = 'ru-RU';
+            speechSynthesis.speak(utter);
+        }
+
+        function speakCurrentSentence() {
+            const sentence = currentSentence();
+            if (sentence) speakText(sentence);
+        }
+
+        function toggleAutoSpeak(checked) {
+            autoSpeakEnabled = checked;
+        }
+
+        /* =====================================================================
+           1e. ЗАГРУЗКА ЗАРАНЕЕ ЗАПИСАННОГО ВИДЕО ВМЕСТО КАМЕРЫ
+           Видео проходит через ТОТ ЖЕ pipeline: GestureRecognizer.recognizeForVideo()
+           + handleGestureResult(), просто источником кадров служит <video>, а не камера.
+           ===================================================================== */
+        async function handleGestureVideoUpload(event) {
+            const file = event.target.files[0];
+            event.target.value = '';
+            if (!file) return;
+            const statusEl = document.getElementById('video-upload-status');
+
+            if (!gestureRecognizerModel) {
+                if (statusEl) statusEl.innerText = 'Модель распознавания ещё загружается, подожди секунду и попробуй снова';
+                return;
+            }
+
+            videoPipelineBusy = true; // ставим живую камеру на паузу, чтобы не было гонки за один экземпляр модели
+            wordHistory = []; // новая сессия распознавания для этого видео
+            lastGesture = null; lastGestureTime = 0; sequenceFrameBuffer = [];
+            renderWordHistory();
+
+            const offscreenVideo = document.createElement('video');
+            offscreenVideo.src = URL.createObjectURL(file);
+            offscreenVideo.muted = true;
+            offscreenVideo.playsInline = true;
+
+            if (statusEl) statusEl.innerText = 'Загрузка видео...';
+
+            offscreenVideo.onloadedmetadata = async () => {
+                if (statusEl) statusEl.innerText = 'Обработка видео: 0%';
+                try {
+                    await offscreenVideo.play();
+                } catch (e) { /* автоплей может быть заблокирован — тем не менее seek-based проход ниже сработает */ }
+
+                const duration = offscreenVideo.duration || 0;
+                const FRAME_STEP_SEC = 1 / 15; // разбираем видео на ~15 кадров/сек
+
+                for (let t = 0; t < duration; t += FRAME_STEP_SEC) {
+                    await new Promise(resolve => {
+                        offscreenVideo.currentTime = t;
+                        offscreenVideo.onseeked = resolve;
+                    });
+                    try {
+                        const result = gestureRecognizerModel.recognizeForVideo(offscreenVideo, performance.now());
+                        handleGestureResult(result, { source: 'video' });
+                    } catch (e) { /* пропускаем кадр при сбое декодирования */ }
+
+                    if (statusEl) statusEl.innerText = `Обработка видео: ${Math.round((t / duration) * 100)}%`;
+                }
+
+                if (statusEl) statusEl.innerText = `Готово. Распознано слов: ${wordHistory.length}`;
+                URL.revokeObjectURL(offscreenVideo.src);
+                videoPipelineBusy = false;
+            };
+        }
+
+        // Классический детектор @mediapipe/hands — используется ТОЛЬКО training-панелью
+        // (для основного звонка теперь используется GestureRecognizer, см. ниже).
+        function createHandsInstance() {
+            const instance = new Hands({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+            });
+            instance.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.7,
+                minTrackingConfidence: 0.6
+            });
+            return instance;
+        }
+
+        // Пары индексов landmarks (0-20), которые нужно соединить линиями, чтобы
+        // нарисовать "скелет" руки — по официальной топологии MediaPipe Hands.
+        const HAND_CONNECTIONS = [
+            [0,1],[1,2],[2,3],[3,4],           // большой палец
+            [0,5],[5,6],[6,7],[7,8],           // указательный
+            [5,9],[9,10],[10,11],[11,12],      // средний
+            [9,13],[13,14],[14,15],[15,16],    // безымянный
+            [13,17],[17,18],[18,19],[19,20],   // мизинец
+            [0,17]                              // ладонь
+        ];
+
+        // Рисует найденные руки + landmarks на прозрачном canvas поверх видео.
+        // Canvas уже отзеркален через CSS (transform: scaleX(-1)) синхронно с видео,
+        // поэтому координаты рисуем как есть, в нормализованных [0..1] -> пиксели.
+        function drawHandLandmarks(canvasId, videoEl, landmarksList) {
+            const canvas = document.getElementById(canvasId);
+            if (!canvas || !videoEl) return;
+            const w = videoEl.clientWidth || videoEl.videoWidth || 300;
+            const h = videoEl.clientHeight || videoEl.videoHeight || 200;
+            if (canvas.width !== w) canvas.width = w;
+            if (canvas.height !== h) canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            if (!landmarksList || landmarksList.length === 0) return;
+
+            landmarksList.forEach(landmarks => {
+                ctx.strokeStyle = 'rgba(6, 182, 212, 0.9)';
+                ctx.lineWidth = 2;
+                HAND_CONNECTIONS.forEach(([a, b]) => {
+                    const pa = landmarks[a], pb = landmarks[b];
+                    ctx.beginPath();
+                    ctx.moveTo(pa.x * canvas.width, pa.y * canvas.height);
+                    ctx.lineTo(pb.x * canvas.width, pb.y * canvas.height);
+                    ctx.stroke();
+                });
+                landmarks.forEach((p, i) => {
+                    ctx.fillStyle = i === 0 ? 'rgba(139, 92, 246, 1)' : 'rgba(16, 185, 129, 0.95)';
+                    ctx.beginPath();
+                    ctx.arc(p.x * canvas.width, p.y * canvas.height, i === 0 ? 5 : 3.5, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+            });
+        }
+
+        function updateConfidenceBadge(score) {
+            const badge = document.getElementById('confidence-badge');
+            if (!badge) return;
+            if (score === null || score === undefined) {
+                badge.classList.remove('visible');
+                return;
+            }
+            badge.innerText = `confidence: ${(score * 100).toFixed(0)}%`;
+            badge.classList.add('visible');
+        }
+
+        async function initGestureRecognition() {
+            const video = document.getElementById('webcam');
+            if (!video) return;
+
+            if (typeof GestureRecognizer === 'undefined' || typeof FilesetResolver === 'undefined') {
+                // модуль @mediapipe/tasks-vision грузится асинхронно (type="module") — ждём и пробуем снова
+                setTimeout(initGestureRecognition, 300);
+                return;
+            }
+
+            if (!gestureRecognizerModel) {
+                try {
+                    const vision = await FilesetResolver.forVisionTasks(
+                        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm'
+                    );
+                    gestureRecognizerModel = await GestureRecognizer.createFromOptions(vision, {
+                        baseOptions: {
+                            modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task',
+                            delegate: 'GPU'
+                        },
+                        runningMode: 'VIDEO',
+                        numHands: 1
+                    });
+                } catch (err) {
+                    console.error('Не удалось загрузить предобученную модель GestureRecognizer:', err);
+                    return;
+                }
+            }
+
+            const processFrame = () => {
+                if (!isRecognitionPaused && !videoPipelineBusy && video.readyState >= 2 && gestureRecognizerModel) {
+                    try {
+                        const result = gestureRecognizerModel.recognizeForVideo(video, performance.now());
+                        handleGestureResult(result, { source: 'camera', canvasId: 'landmarks-overlay', videoEl: video });
+                    } catch (e) { /* пропускаем кадр при сбое */ }
+                }
+                gestureRafId = requestAnimationFrame(processFrame);
+            };
+            processFrame();
+        }
+
+        // === Защита от повторного распознавания одного и того же жеста на каждом кадре ===
+        // lastGesture/lastGestureTime — жест засчитывается заново только если он ИЗМЕНИЛСЯ,
+        // либо прошло больше GESTURE_REPEAT_COOLDOWN_MS с последнего засчитанного повтора.
+        const GESTURE_REPEAT_COOLDOWN_MS = 1200;
+
+        // Общий обработчик результата GestureRecognizer — используется И для живой камеры,
+        // И для загруженного видео (пункт "не делай отдельную фейковую систему").
+        // options: { source: 'camera'|'video', canvasId, videoEl }
+        function handleGestureResult(result, options = {}) {
+            const { source = 'camera', canvasId, videoEl } = options;
+
+            if (!result || !result.landmarks || result.landmarks.length === 0) {
+                latestLandmarks = null;
+                updateConfidenceBadge(null);
+                if (canvasId) drawHandLandmarks(canvasId, videoEl, []);
+                pushSequenceFrame(null); // разрывает текущую динамическую последовательность
+                return;
+            }
+
+            const landmarks = result.landmarks[0];
+            latestLandmarks = landmarks; // для training-панели (живой тест твоего k-NN)
+
+            if (canvasId) drawHandLandmarks(canvasId, videoEl, result.landmarks);
+
+            let text = null;
+            let confidence = null;
+
+            // 1) сначала спрашиваем ПРЕДОБУЧЕННУЮ модель Google (7 базовых жестов)
+            const topGesture = result.gestures && result.gestures[0] && result.gestures[0][0];
+            if (topGesture && topGesture.categoryName !== 'None' && topGesture.score >= CANNED_MIN_SCORE) {
+                text = CANNED_GESTURE_TO_TEXT[topGesture.categoryName] || null;
+                confidence = topGesture.score;
+            }
+
+            const vector = landmarksToFeatureVector(landmarks);
+            pushSequenceFrame(vector); // копим окно кадров для динамических (многокадровых) жестов
+
+            // 2) если она не узнала жест — сначала пробуем ДИНАМИЧЕСКИЕ обученные жесты (последовательности)
+            if (!text) {
+                const seqResult = classifySequenceWithKNN();
+                if (seqResult) { text = seqResult.label; confidence = seqResult.confidence; }
+            }
+
+            // 3) а затем статические обученные жесты (k-NN по одному кадру)
+            if (!text) {
+                const staticResult = classifyWithKNN(vector);
+                if (staticResult) { text = staticResult; confidence = confidence ?? 0.7; }
+            }
+
+            updateConfidenceBadge(text ? confidence : null);
+
+            const now = performance.now();
+            if (text && (text !== lastGesture || now - lastGestureTime > GESTURE_REPEAT_COOLDOWN_MS)) {
+                lastGesture = text;
+                lastGestureTime = now;
+                onGestureRecognized(text, source);
+            } else if (!text) {
+                lastGesture = null;
+            }
+        }
+
+        // Срабатывает один раз на каждый НОВЫЙ распознанный жест (после дедупликации).
+        // Собирает слова в фразу, ведёт историю, показывает субтитры и (опционально) озвучивает.
+        function onGestureRecognized(text, source) {
+            showLiveCaption(text);
+
+            const subtitlesBox = document.getElementById('subtitles-box');
+            const subtitleEl = document.getElementById('active-subtitle');
+            if (subtitleEl && subtitlesBox && subtitlesBox.style.display !== 'none') {
+                subtitleEl.innerText = `"${text}"`;
+            }
+
+            addWordToHistory(text);
+
+            if (source === 'video') {
+                const statusEl = document.getElementById('video-upload-status');
+                if (statusEl) statusEl.innerText = `Найден жест в видео: "${text}"`;
+            }
+        }
+
+        let captionHideTimer = null;
+        function showLiveCaption(text) {
+            const bar = document.getElementById('live-caption-bar');
+            const textEl = document.getElementById('live-caption-text');
+            if (!bar || !textEl) return;
+            textEl.innerText = text;
+            bar.classList.add('visible');
+            clearTimeout(captionHideTimer);
+            captionHideTimer = setTimeout(() => bar.classList.remove('visible'), 2500);
+        }
+
+        // Переводим 21 точку руки (x,y,z в координатах кадра) в вектор,
+        // не зависящий от положения руки в кадре и от расстояния до камеры:
+        // 1) сдвигаем всё в систему координат запястья (landmark 0)
+        // 2) делим на расстояние "запястье -> основание среднего пальца" (landmark 9)
+        //    как на масштаб самой кисти
+        // Используется ТОЛЬКО для твоего собственного k-NN (запасной вариант,
+        // когда предобученная модель Google не узнала жест).
+        function landmarksToFeatureVector(lm) {
+            const wrist = lm[0];
+            const scaleRef = lm[9];
+            const scale = Math.hypot(
+                scaleRef.x - wrist.x,
+                scaleRef.y - wrist.y,
+                scaleRef.z - wrist.z
+            ) || 1e-6;
+
+            const vector = [];
+            for (const p of lm) {
+                vector.push((p.x - wrist.x) / scale, (p.y - wrist.y) / scale, (p.z - wrist.z) / scale);
+            }
+            return vector;
+        }
+
+        function euclideanDistance(a, b) {
+            let sum = 0;
+            for (let i = 0; i < a.length; i++) sum += (a[i] - b[i]) ** 2;
+            return Math.sqrt(sum);
+        }
+
+        // Настоящий k-NN: ищем K ближайших записанных образцов, голосуем по большинству.
+        // Возвращает null, если обучающих данных нет вообще, либо ближайший образец
+        // слишком далёк (значит текущая поза руки ни на что не похожа).
+        function classifyWithKNN(vector) {
+            const staticSamples = gestureModel.samples.filter(s => s.type !== 'sequence');
+            if (staticSamples.length === 0) return null;
+
+            const distances = staticSamples.map(s => ({
+                label: s.label,
+                dist: euclideanDistance(vector, s.vector)
+            }));
+            distances.sort((a, b) => a.dist - b.dist);
+
+            const nearest = distances.slice(0, Math.min(KNN_K, distances.length));
+            if (nearest[0].dist > KNN_MAX_DISTANCE) return null;
+
+            const votes = {};
+            nearest.forEach(n => { votes[n.label] = (votes[n.label] || 0) + 1; });
+
+            let bestLabel = null, bestCount = -1;
+            for (const label in votes) {
+                if (votes[label] > bestCount) { bestCount = votes[label]; bestLabel = label; }
+            }
+
+            if (bestCount / nearest.length < KNN_MIN_VOTES_SHARE) return null;
+            return bestLabel;
+        }
+
+        function stopGestureRecognition() {
+            if (gestureRafId) cancelAnimationFrame(gestureRafId);
+            gestureRafId = null;
+        }
+
+        /* =====================================================================
+           1b. TRAINING-ПАНЕЛЬ: пользователь сам записывает образцы жестов
+           через отдельную камеру-превью — эти данные и наполняют gestureModel.
+           ===================================================================== */
+
+        let trainingHandsDetector = null;
+        let trainingRafId = null;
+        let trainingStream = null;
+        let recordIntervalId = null;
+
+        async function openTrainingPanel() {
+            document.getElementById('training-panel').style.display = 'flex';
+
+            const video = document.getElementById('training-webcam');
+            if (!trainingStream) {
+                try {
+                    trainingStream = await navigator.mediaDevices.getUserMedia({ video: true });
+                    video.srcObject = trainingStream;
+                } catch (err) {
+                    console.warn('Камера для обучения недоступна', err);
+                    document.getElementById('training-hand-status').innerText = 'Камера недоступна';
+                    return;
+                }
+            }
+
+            if (!trainingHandsDetector) {
+                trainingHandsDetector = createHandsInstance();
+                trainingHandsDetector.onResults(onTrainingHandsResults);
+            }
+
+            const loop = async () => {
+                if (video.readyState >= 2) {
+                    try { await trainingHandsDetector.send({ image: video }); }
+                    catch (e) { /* skip frame */ }
+                }
+                trainingRafId = requestAnimationFrame(loop);
+            };
+            loop();
+
+            renderSampleCounts();
+        }
+
+        function closeTrainingPanel() {
+            document.getElementById('training-panel').style.display = 'none';
+            if (trainingRafId) cancelAnimationFrame(trainingRafId);
+            trainingRafId = null;
+            stopRecording();
+            if (trainingStream) {
+                trainingStream.getTracks().forEach(t => t.stop());
+                trainingStream = null;
+            }
+            trainingHandsDetector = null;
+        }
+
+        let latestTrainingLandmarks = null;
+
+        function onTrainingHandsResults(results) {
+            const statusEl = document.getElementById('training-hand-status');
+            const testEl = document.getElementById('live-test-result');
+            const video = document.getElementById('training-webcam');
+
+            if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+                latestTrainingLandmarks = null;
+                if (statusEl) statusEl.innerText = 'Рука не найдена';
+                drawHandLandmarks('training-landmarks-overlay', video, []);
+                return;
+            }
+
+            latestTrainingLandmarks = results.multiHandLandmarks[0];
+            if (statusEl) statusEl.innerText = 'Рука обнаружена ✓';
+            drawHandLandmarks('training-landmarks-overlay', video, results.multiHandLandmarks);
+
+            // Живой тест текущей модели прямо в training-панели
+            if (testEl) {
+                const vector = landmarksToFeatureVector(latestTrainingLandmarks);
+                const predicted = classifyWithKNN(vector);
+                testEl.innerText = predicted ? `Тест распознавания: "${predicted}"` : 'Тест распознавания: не распознано';
+            }
+        }
+
+        let recordingSequenceFrames = null; // копится, пока держим кнопку с включённым "динамический жест"
+
+        function startRecording() {
+            const labelInput = document.getElementById('gesture-label-input');
+            const label = labelInput.value.trim();
+            if (!label) {
+                labelInput.focus();
+                return;
+            }
+            if (recordIntervalId) return;
+
+            const isDynamic = document.getElementById('dynamic-gesture-checkbox')?.checked;
+            if (isDynamic) recordingSequenceFrames = [];
+
+            recordIntervalId = setInterval(() => {
+                if (!latestTrainingLandmarks) return;
+                const vector = landmarksToFeatureVector(latestTrainingLandmarks);
+                if (isDynamic) {
+                    recordingSequenceFrames.push(vector);
+                } else {
+                    gestureModel.samples.push({ label, type: 'static', vector });
+                    renderSampleCounts();
+                }
+            }, 150); // ~6-7 образцов в секунду, пока кнопка удерживается
+        }
+
+        function stopRecording() {
+            if (recordIntervalId) {
+                clearInterval(recordIntervalId);
+                recordIntervalId = null;
+            }
+            const labelInput = document.getElementById('gesture-label-input');
+            const label = labelInput.value.trim();
+            // Если шла запись динамического жеста — сохраняем ВСЮ накопленную последовательность
+            // как ОДИН образец (в отличие от статических, где каждый кадр — отдельный образец).
+            if (recordingSequenceFrames && recordingSequenceFrames.length >= SEQUENCE_MIN_FRAMES && label) {
+                gestureModel.samples.push({ label, type: 'sequence', frames: recordingSequenceFrames });
+                renderSampleCounts();
+            }
+            recordingSequenceFrames = null;
+        }
+
+        // Прогоняет загруженное обучающее видео через тот же MediaPipe Hands детектор,
+        // что и живая камера training-панели, и добавляет образцы в датасет для текущей метки.
+        async function handleTrainingVideoUpload(event) {
+            const file = event.target.files[0];
+            event.target.value = '';
+            if (!file) return;
+
+            const labelInput = document.getElementById('gesture-label-input');
+            const label = labelInput.value.trim();
+            const statusEl = document.getElementById('training-video-status');
+            if (!label) {
+                labelInput.focus();
+                if (statusEl) statusEl.innerText = 'Сначала введи название жеста';
+                return;
+            }
+
+            const isDynamic = document.getElementById('dynamic-gesture-checkbox')?.checked;
+            const detector = trainingHandsDetector || createHandsInstance();
+            if (!trainingHandsDetector) trainingHandsDetector = detector;
+
+            const offscreenVideo = document.createElement('video');
+            offscreenVideo.src = URL.createObjectURL(file);
+            offscreenVideo.muted = true;
+            offscreenVideo.playsInline = true;
+
+            if (statusEl) statusEl.innerText = 'Загрузка видео...';
+
+            offscreenVideo.onloadedmetadata = async () => {
+                try { await offscreenVideo.play(); } catch (e) { /* игнор */ }
+                const duration = offscreenVideo.duration || 0;
+                const FRAME_STEP_SEC = 1 / 10;
+                const sequenceFrames = [];
+                let staticCount = 0;
+
+                for (let t = 0; t < duration; t += FRAME_STEP_SEC) {
+                    await new Promise(resolve => {
+                        offscreenVideo.currentTime = t;
+                        offscreenVideo.onseeked = resolve;
+                    });
+
+                    const frameLandmarks = await new Promise(resolve => {
+                        const handler = (results) => {
+                            resolve(results.multiHandLandmarks && results.multiHandLandmarks[0] || null);
+                        };
+                        detector.onResults(handler);
+                        detector.send({ image: offscreenVideo }).catch(() => resolve(null));
+                    });
+
+                    if (frameLandmarks) {
+                        const vector = landmarksToFeatureVector(frameLandmarks);
+                        if (isDynamic) {
+                            sequenceFrames.push(vector);
+                        } else {
+                            gestureModel.samples.push({ label, type: 'static', vector });
+                            staticCount++;
+                        }
+                    }
+                    if (statusEl) statusEl.innerText = `Обработка видео: ${Math.round((t / duration) * 100)}%`;
+                }
+
+                if (isDynamic && sequenceFrames.length >= SEQUENCE_MIN_FRAMES) {
+                    gestureModel.samples.push({ label, type: 'sequence', frames: sequenceFrames });
+                    if (statusEl) statusEl.innerText = `Готово: добавлена 1 динамическая последовательность (${sequenceFrames.length} кадров)`;
+                } else if (!isDynamic) {
+                    if (statusEl) statusEl.innerText = `Готово: добавлено ${staticCount} статических образцов`;
+                } else {
+                    if (statusEl) statusEl.innerText = 'Не удалось найти достаточно кадров с рукой в видео';
+                }
+
+                // возвращаем детектор к обычному live-обработчику training-панели
+                detector.onResults(onTrainingHandsResults);
+                renderSampleCounts();
+                URL.revokeObjectURL(offscreenVideo.src);
+            };
+        }
+
+        function renderSampleCounts() {
+            const counts = {};
+            gestureModel.samples.forEach(s => { counts[s.label] = (counts[s.label] || 0) + 1; });
+
+            const listEl = document.getElementById('training-samples-list');
+            if (!listEl) return;
+
+            const labels = Object.keys(counts);
+            if (labels.length === 0) {
+                listEl.innerHTML = '<div style="color:var(--text-muted); font-size:12px;">Пока ничего не записано</div>';
+                return;
+            }
+
+            listEl.innerHTML = labels.map(label => {
+                const enough = counts[label] >= 15;
+                const color = enough ? 'var(--accent-green)' : 'var(--text-muted)';
+                return `<div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--border-color);">
+                    <span>${label}</span>
+                    <span style="display:flex; align-items:center; gap:8px;">
+                        <span style="color:${color}; font-size:12px;">${counts[label]} обр.</span>
+                        <button onclick="deleteGestureLabel('${label.replace(/'/g, "\\'")}')" style="background:none; border:none; color:var(--danger-red); cursor:pointer; font-size:14px;">✕</button>
+                    </span>
+                </div>`;
+            }).join('');
+        }
+
+        function deleteGestureLabel(label) {
+            gestureModel.samples = gestureModel.samples.filter(s => s.label !== label);
+            renderSampleCounts();
+        }
+
+        function clearGestureModel() {
+            if (!confirm('Удалить все записанные жесты?')) return;
+            gestureModel.samples = [];
+            renderSampleCounts();
+        }
+
+        // Реальная персистентность без localStorage: скачиваем/загружаем настоящий JSON-файл.
+        function exportGestureModel() {
+            const blob = new Blob([JSON.stringify(gestureModel, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'clarity-gesture-model.json';
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function importGestureModel(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const parsed = JSON.parse(e.target.result);
+                    if (Array.isArray(parsed.samples)) {
+                        gestureModel.samples = parsed.samples;
+                        renderSampleCounts();
+                    }
+                } catch (err) {
+                    alert('Не удалось прочитать файл модели');
+                }
+            };
+            reader.readAsText(file);
+            event.target.value = '';
+        }
+
+        /* =====================================================================
+           2. РАСПОЗНАВАНИЕ РЕЧИ: Web Speech API -> текст -> субтитры + жест руки
+           Используется для роли "Глухой": речь собеседника превращается в текст
+           и (в перспективе) в анимацию 3D-руки.
+           ===================================================================== */
+
+        let speechRecognizer = null;
+
+        function initSpeechRecognition() {
+            const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+            const statusText = document.getElementById('speech-status-text');
+
+            if (!SpeechRecognitionAPI) {
+                if (statusText) statusText.innerText = 'Web Speech API не поддерживается (нужен Chrome/Edge)';
+                console.warn('SpeechRecognition недоступен в этом браузере');
+                return;
+            }
+
+            speechRecognizer = new SpeechRecognitionAPI();
+            speechRecognizer.lang = 'ru-RU';
+            speechRecognizer.continuous = true;
+            speechRecognizer.interimResults = true;
+
+            speechRecognizer.onresult = (event) => {
+                let finalText = '';
+                let interimText = '';
+
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    const transcript = event.results[i][0].transcript;
+                    if (event.results[i].isFinal) finalText += transcript;
+                    else interimText += transcript;
+                }
+
+                if (statusText) statusText.innerText = finalText || interimText || 'Слушаю...';
+                if (finalText) handleRecognizedSpeech(finalText.trim());
+            };
+
+            speechRecognizer.onerror = (event) => {
+                console.warn('Ошибка распознавания речи:', event.error);
+            };
+
+            speechRecognizer.onend = () => {
+                // Chrome сам останавливает распознавание через паузу — перезапускаем, пока идёт звонок
+                const callVisible = document.getElementById('call-screen').style.display !== 'none';
+                if (callVisible && speechRecognizer) speechRecognizer.start();
+            };
+
+            speechRecognizer.start();
+        }
+
+        function stopSpeechRecognition() {
+            if (speechRecognizer) {
+                speechRecognizer.onend = null;
+                speechRecognizer.stop();
+                speechRecognizer = null;
+            }
+        }
+
+        /* =====================================================================
+           5/6/7. TEXT ⇄ ЖЕСТ, ГОЛОС → ЖЕСТ, 3D-АВАТАР РУКИ (реальный риг, а не заглушка)
+
+           Модель hand_model.glb — это НАСТОЯЩИЙ skinned-риг: у неё есть кости
+           thumb_01.R/02/03, index_01.R/02/03, middle_*, ring_*, pinky_* (проверено
+           по самому .glb — 69 joints в skin[0]). Значит пальцы можно реально сгибать
+           через bone.quaternion, а не имитировать жест масштабированием контейнера.
+
+           Архитектура специально разделена на два независимых слоя:
+             SIGN_DICTIONARY   — слово/жест (человеко-читаемая метка) -> ключ позы
+             GESTURE_POSES      — ключ позы -> сгибание (0..1) каждого пальца
+           Чтобы добавить новый жест, достаточно дописать одну строку в SIGN_DICTIONARY
+           (если подходит существующая поза) или новую позу в GESTURE_POSES — переписывать
+           остальной код не нужно.
+
+           ВАЖНО: ось сгибания (CURL_AXIS) и знак позы подобраны по стандартной
+           ориентации костей пальцев, но это НЕ визуально протестировано (в этой среде
+           нет рендера WebGL) — если после первого запуска пальцы гнутся "не в ту сторону",
+           поменяй знак в CURL_AXIS или в SIGN_HAND_MIRROR ниже на -1.
+           ===================================================================== */
+
+        const SIGN_HAND_MIRROR = 1; // если сгибание идёт в обратную сторону — поставь -1
+        const CURL_AXIS = new THREE.Vector3(1, 0, 0);
+        const MAX_CURL_RAD = 1.35 * SIGN_HAND_MIRROR;
+
+        // Ключ позы -> сгибание каждого пальца от 0 (прямой) до 1 (полностью сжат в кулак).
+        // Расширяемо: просто добавь новую запись.
+        const GESTURE_POSES = {
+            open_palm:   { thumb: 0.05, index: 0,    middle: 0,    ring: 0,    pinky: 0 },
+            fist:        { thumb: 0.75, index: 0.95, middle: 0.95, ring: 0.95, pinky: 0.95 },
+            thumbs_up:   { thumb: 0,    index: 0.95, middle: 0.95, ring: 0.95, pinky: 0.95 },
+            thumbs_down: { thumb: 0,    index: 0.95, middle: 0.95, ring: 0.95, pinky: 0.95 },
+            victory:     { thumb: 0.8,  index: 0,    middle: 0,    ring: 0.95, pinky: 0.95 },
+            pointing:    { thumb: 0.8,  index: 0,    middle: 0.95, ring: 0.95, pinky: 0.95 },
+            i_love_you:  { thumb: 0,    index: 0,    middle: 0.95, ring: 0.95, pinky: 0 },
+            gentle_wave: { thumb: 0.1,  index: 0.1,  middle: 0.1,  ring: 0.1,  pinky: 0.1 }
+        };
+
+        // Слово (как оно приходит из речи/текста, в нижнем регистре) -> ключ позы выше.
+        // Расширяемо: чтобы добавить новый жест словаря, просто добавь строку сюда
+        // (и, если нужна новая форма руки, — новую запись в GESTURE_POSES).
+        const SIGN_DICTIONARY = {
+            'привет': 'open_palm',
+            'пока': 'gentle_wave',
+            'спасибо': 'gentle_wave',
+            'да': 'fist',
+            'нет': 'pointing',
+            'как': 'pointing',
+            'дела': 'open_palm',
+            'хорошо': 'thumbs_up',
+            'плохо': 'thumbs_down',
+            'мир': 'victory',
+            'внимание': 'pointing',
+            'ты': 'pointing',
+            'я': 'open_palm',
+            'тебя': 'open_palm',
+            'люблю': 'i_love_you'
+        };
+
+        function updateSignDictionaryPreview() {
+            const el = document.getElementById('sign-dictionary-preview');
+            if (el) el.innerText = Object.keys(SIGN_DICTIONARY).join(', ');
+        }
+
+        // Разбирает текст на слова и сопоставляет каждому известную позу (или null).
+        function parseTextToPoseSequence(text) {
+            const words = text.toLowerCase().replace(/[.,!?;:"']/g, '').split(/\s+/).filter(Boolean);
+            return words.map(word => ({ word, poseKey: SIGN_DICTIONARY[word] || null }));
+        }
+
+        // Строит карту { "палец_сегмент": THREE.Bone } из загруженной GLTF-сцены,
+        // используя реальные имена костей модели (thumb_01.R_08, index_02.R_018, ...).
+        function buildHandBoneMap(root) {
+            const map = {};
+            root.traverse(node => {
+                const match = node.name && node.name.match(/^(thumb|index|middle|ring|pinky)_(01|02|03)\.R/);
+                if (match && node.isBone) {
+                    const key = `${match[1]}_${match[2]}`;
+                    map[key] = node;
+                    node.userData.restQuaternion = node.quaternion.clone();
+                }
+            });
+            return map;
+        }
+
+        function animateBoneQuaternion(bone, targetQuat, duration) {
+            const startQuat = bone.quaternion.clone();
+            const startTime = performance.now();
+            (function step() {
+                const t = Math.min(1, (performance.now() - startTime) / duration);
+                bone.quaternion.slerpQuaternions(startQuat, targetQuat, t);
+                if (t < 1) requestAnimationFrame(step);
+            })();
+        }
+
+        // Применяет позу жеста к переданной карте костей (мгновенно, если duration = 0).
+        function applyPoseToHand(boneMap, poseKey, duration = 300) {
+            if (!boneMap) return;
+            const pose = GESTURE_POSES[poseKey] || GESTURE_POSES.open_palm;
+            ['thumb', 'index', 'middle', 'ring', 'pinky'].forEach(finger => {
+                const curl = pose[finger] ?? 0;
+                // Базовый сустав гнётся чуть меньше кончика — для более естественной позы.
+                const segCurls = { '01': curl * 0.7, '02': curl, '03': curl };
+                Object.entries(segCurls).forEach(([seg, amount]) => {
+                    const bone = boneMap[`${finger}_${seg}`];
+                    if (!bone) return;
+                    const rest = bone.userData.restQuaternion || bone.quaternion.clone();
+                    const delta = new THREE.Quaternion().setFromAxisAngle(CURL_AXIS, amount * MAX_CURL_RAD);
+                    const target = rest.clone().multiply(delta);
+                    if (duration > 0) animateBoneQuaternion(bone, target, duration);
+                    else bone.quaternion.copy(target);
+                });
+            });
+        }
+
+        let callAvatarBoneMap = null;
+        let mannequinBoneMap = null;
+        let signPanelBoneMap = null;
+
+        // Проигрывает последовательность жестов (слово за словом) на указанной карте костей.
+        function playGestureSequence(sequence, boneMapGetter, statusElId, delayMs = 850) {
+            let i = 0;
+            (function playNext() {
+                if (i >= sequence.length) return;
+                const { word, poseKey } = sequence[i];
+                const boneMap = boneMapGetter();
+                const statusEl = statusElId && document.getElementById(statusElId);
+                if (poseKey && boneMap) {
+                    applyPoseToHand(boneMap, poseKey, 250);
+                    if (statusEl) statusEl.innerText = `Жест: "${word}"`;
+                } else if (statusEl) {
+                    statusEl.innerText = `"${word}" — жест ещё не в словаре, пропускаю`;
+                }
+                i++;
+                setTimeout(playNext, delayMs);
+            })();
+        }
+
+        // === Голос -> жесты (используется в звонке для профиля "Глухой") ===
+        function handleRecognizedSpeech(text) {
+            const sequence = parseTextToPoseSequence(text);
+            playGestureSequence(sequence, () => callAvatarBoneMap, null, 700);
+        }
+
+        // === Текст -> жесты (панель "Текст → Жесты") ===
+        function playTextAsSigns() {
+            const input = document.getElementById('sign-text-input');
+            const text = input.value.trim();
+            const wordsEl = document.getElementById('sign-parsed-words');
+            const statusEl = document.getElementById('sign-play-status');
+            if (!text) return;
+
+            const sequence = parseTextToPoseSequence(text);
+            if (wordsEl) {
+                wordsEl.innerHTML = sequence.map(({ word, poseKey }) =>
+                    `<span class="sign-word-tag ${poseKey ? 'known' : 'unknown'}">${word}</span>`
+                ).join('');
+            }
+            if (!signPanelBoneMap) {
+                if (statusEl) statusEl.innerText = '3D-модель ещё загружается, подожди секунду...';
+                return;
+            }
+            playGestureSequence(sequence, () => signPanelBoneMap, 'sign-play-status', 900);
+        }
+
+        function toggleSignPanel() {
+            const panel = document.getElementById('sign-panel');
+            const isOpening = panel.style.display !== 'flex';
+            panel.style.display = isOpening ? 'flex' : 'none';
+            updateSignDictionaryPreview();
+            if (isOpening && !signPanelBoneMap) initSignPanel3D();
+        }
+
+        // Отдельная маленькая 3D-сцена для панели "Текст → Жесты" — переиспользует ту же
+        // модель и тот же loadModelWithParsedJSON(...), что и остальные виджеты.
+        function initSignPanel3D() {
+            const container = document.getElementById('sign-panel-canvas');
+            const scene = new THREE.Scene();
+            const camera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 0.1, 1000);
+
+            const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            container.appendChild(renderer.domElement);
+
+            scene.add(new THREE.AmbientLight(0xffffff, 1.8));
+            const dirLight = new THREE.DirectionalLight(0xffffff, 2);
+            dirLight.position.set(2, 5, 3);
+            scene.add(dirLight);
+
+            const loader = new THREE.GLTFLoader();
+            loadModelWithParsedJSON(loader, MODEL_URL, (gltf) => {
+                const handMesh = gltf.scene;
+                handMesh.scale.set(1.5, 1.5, 1.5);
+                handMesh.position.set(0, -0.8, 0);
+                handMesh.rotation.set(Math.PI / 4, Math.PI, 0);
+                scene.add(handMesh);
+
+                signPanelBoneMap = buildHandBoneMap(handMesh);
+                applyPoseToHand(signPanelBoneMap, 'open_palm', 0);
+
+                (function renderLoop() {
+                    renderer.render(scene, camera);
+                    requestAnimationFrame(renderLoop);
+                })();
+            });
+
+            camera.position.z = 2.5;
+        }
+    </script>
+</body>
+</html>
